@@ -1,10 +1,9 @@
 name: Auto Reading Bot
 
 on:
-  # 定时触发 - Fork 后如需自动定时运行，请取消下方 schedule 注释
-  # schedule:
-  #   - cron: '0 0 * * *'    # UTC 00:00 = 北京时间 08:00
-  #   - cron: '0 12 * * *'   # UTC 12:00 = 北京时间 20:00
+  # 每天北京时间 06:30 触发（UTC 前一天 22:30）
+  schedule:
+    - cron: '30 22 * * *'
   
   # 拉取请求触发，用于测试阅读
   pull_request:
@@ -19,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       target_duration:
-        description: '阅读时长（分钟，格式：10-20。留空时优先使用仓库 Secret TARGET_DURATION，否则默认 1-2）'
+        description: '阅读时长（分钟，格式：10-20。留空时优先使用仓库 Secret TARGET_DURATION，否则默认 45-60）'
         required: false
         default: ''
         type: string
@@ -84,7 +83,7 @@ jobs:
         fi
 
         if [ -z "$target_duration" ]; then
-          target_duration="1-2"
+          target_duration="45-60"
         fi
 
         echo "TARGET_DURATION=$target_duration" >> "$GITHUB_ENV"
