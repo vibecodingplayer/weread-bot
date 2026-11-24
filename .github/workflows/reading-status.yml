@@ -1,0 +1,80 @@
+name: 阅读任务状态
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/reading-status.yml']
+
+permissions:
+  actions: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: 核对 GitHub 上的定时和手动运行记录
+        shell: python
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          import json
+          import os
+          from datetime import datetime, timedelta, timezone
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          api = os.environ["GITHUB_API_URL"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          workflow_url = f"{api}/repos/{repo}/actions/workflows/auto-reading.yml"
+          beijing = timezone(timedelta(hours=8))
+
+          def get_json(url):
+              headers = {"Accept": "application/vnd.github+json"}
+              if os.environ.get("GH_TOKEN"):
+                  headers["Authorization"] = "Bearer " + os.environ["GH_TOKEN"]
+              with urlopen(Request(url, headers=headers), timeout=20) as response:
+                  return json.load(response)
+
+          def latest(event, status=None):
+              query = {"branch": os.environ["DEFAULT_BRANCH"], "event": event, "per_page": 1}
+              if status:
+                  query["status"] = status
+              runs = get_json(f"{workflow_url}/runs?{urlencode(query)}")["workflow_runs"]
+              return runs[0] if runs else None
+
+          def started(run):
+              return datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+
+          state = get_json(workflow_url)["state"]
+          scheduled = latest("schedule")
+          last_success = latest("schedule", "success")
+          manual = latest("workflow_dispatch")
+          now = datetime.now(timezone.utc)
+
+          problem = ""
+          if state != "active":
+              problem = f"GitHub 显示工作流未启用（{state}）。"
+          elif not scheduled or now - started(scheduled) >= timedelta(hours=48):
+              problem = "最近 48 小时没有定时触发记录。"
+          elif scheduled["status"] == "completed" and scheduled["conclusion"] != "success":
+              problem = f"最近的定时任务已触发，结果为 {scheduled['conclusion']}。"
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              checked = now.astimezone(beijing).strftime("%Y-%m-%d %H:%M")
+              print(f"查询时间 {checked}（北京时间），工作流状态 `{state}`。\n", file=summary)
+              print(problem or "最近 48 小时有定时触发记录。", file=summary)
+              print("\n| 运行 | 开始时间（北京时间） | 状态 |", file=summary)
+              print("| --- | --- | --- |", file=summary)
+              for label, run in [("最近定时", scheduled), ("最近定时成功", last_success), ("最近手动", manual)]:
+                  if run is None:
+                      print(f"| {label} | — | 无记录 |", file=summary)
+                      continue
+                  when = started(run).astimezone(beijing).strftime("%Y-%m-%d %H:%M")
+                  status = run["conclusion"] or run["status"]
+                  print(f"| [{label}]({run['html_url']}) | {when} | `{status}` |", file=summary)
+
+          if problem:
+              print(f"::warning::{problem}")
